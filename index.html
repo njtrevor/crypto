@@ -130,19 +130,20 @@
     </div>
     <div class="meta">
       <span id="clock">--</span>
-      <button class="refresh-btn" id="refreshBtn" onclick="refreshAll()">刷新数据</button>
+      <button class="refresh-btn" id="refreshBtn">刷新数据</button>
     </div>
   </header>
 
   <div class="grid" id="grid"></div>
 
   <footer>
-    <span>价格 / 24h 成交额：BSV、OKB 来自 OKX，其余来自 Binance（均为 USDT 计价）</span>
-    <span>涨跌幅 = 现价 相对 北京时间当日 00:00 价格</span>
-    <span>恐慌贪婪指数来自 alternative.me</span>
-    <span>AHR999 数据参考 CoinGlass，官方接口需付费 Key，前端接口取不到时会显示原因</span>
+    <span>价格 / 24h 成交额：BSV、OKB 来自 OKX，其余来自 Binance（均为 USDT 计价），每秒刷新一次</span>
+    <span>涨跌幅 = 现价 相对 北京时间当日 00:00 价格（基准价每天只拉取一次并缓存）</span>
+    <span>恐慌贪婪指数 / AHR999 / 汇率每 60 秒刷新一次</span>
+    <span>AHR999 数据来自 coinank.com 公开接口，取历史数组最后一项即当天最新值，取不到时退回镜像接口</span>
     <span>美元兑离岸人民币优先取 Yahoo Finance CNH=X，取不到时退回近似的在岸人民币中间价</span>
     <span>提示：部分网络环境（如大陆网络）访问币安 / OKX 接口可能受限，若持续获取失败可尝试更换网络或自建代理</span>
+    <span>提示：每秒高频请求交易所公开接口存在触发限流（429/418）的风险，如遇价格长时间不刷新可尝试降低频率</span>
   </footer>
 </div>
 
@@ -278,39 +279,59 @@ async function fetchBinance(path){
   throw lastErr;
 }
 
-async function updateCoin(coin){
-  const card = document.getElementById(cardId(coin.pair));
-  try{
-    const midnight = beijingMidnightUTC();
-    const result = coin.source === "okx"
-      ? await fetchOkxCoin(coin.pair, midnight)
-      : await fetchBinanceCoin(coin.pair, midnight);
+/* ------------------------------------------------------------------
+   价格刷新策略
+   - 北京 0 点开盘价（basePrice，涨跌幅的基准）一天只变一次，所以只在
+     "跨天" 或缓存为空时才去拉取历史K线，不会每秒重复请求。
+   - 实时现价才是每秒刷新的内容，为了不对交易所接口造成过高频率的
+     请求压力，同交易所的所有币种合并成一次批量请求：
+       Binance: /api/v3/ticker/24hr?symbols=["BTCUSDT",...]  一次拿全部
+       OKX:     /api/v5/market/tickers?instType=SPOT         一次拿全部
+     这样无论有多少个币种，每秒也只有 2 个网络请求。
+------------------------------------------------------------------- */
+const basePriceCache = {};   // pair -> { value, dayKey }
+let lastBaseDayKey = null;
 
-    const { current, quoteVol, basePrice } = result;
+function beijingDayKey(){
+  const bj = new Date(Date.now() + 8*3600*1000);
+  return `${bj.getUTCFullYear()}-${bj.getUTCMonth()}-${bj.getUTCDate()}`;
+}
 
-    let changePct = null;
-    if(basePrice && basePrice > 0){
-      changePct = (current - basePrice) / basePrice * 100;
+// 确保每个币种都有"当天"的北京 0 点基准价，跨天时自动重新拉取
+async function ensureBasePrices(){
+  const dayKey = beijingDayKey();
+  if(dayKey === lastBaseDayKey) return; // 今天已经拉过了，不用重复拉
+  lastBaseDayKey = dayKey;
+
+  const midnight = beijingMidnightUTC();
+  await Promise.all(COINS.map(async c=>{
+    try{
+      let value = null;
+      if(c.source === "binance"){
+        const kline = await fetchBinance(`/api/v3/klines?symbol=${c.pair}&interval=1m&startTime=${midnight}&limit=1`);
+        if(Array.isArray(kline) && kline.length) value = parseFloat(kline[0][1]);
+      } else {
+        const after = midnight + 60000;
+        const kline = await fetchJSON(`${OKX_BASE}/api/v5/market/history-candles?instId=${c.pair}&bar=1m&after=${after}&limit=1`);
+        if(kline.code === "0" && kline.data && kline.data.length) value = parseFloat(kline.data[0][1]);
+      }
+      basePriceCache[c.pair] = { value, dayKey };
+    }catch(e){
+      basePriceCache[c.pair] = { value: null, dayKey };
     }
+  }));
+}
 
-    const dirClass = changePct === null ? "flat" : (changePct >= 0 ? "up" : "down");
-    const arrow = changePct === null ? "" : (changePct >= 0 ? "+" : "");
-    const changeText = changePct === null ? "北京0点数据缺失" : `${arrow}${changePct.toFixed(2)}%`;
+function renderCoinCard(coin, live, fetchFailed){
+  const card = document.getElementById(cardId(coin.pair));
+  if(!card) return;
 
-    card.querySelector(".price").className = "price";
-    card.querySelector(".price").textContent = "$" + fmtPrice(current);
-    card.querySelector(".change").className = "change " + dirClass;
-    card.querySelector(".change").textContent = changeText;
-    card.querySelector(".vol").textContent = "额 " + fmtVol(quoteVol);
-
-  }catch(err){
+  if(fetchFailed || !live){
     const exch = coin.source === "okx" ? "OKX" : "Binance";
     let reason = `该币种可能未在 ${exch} 上线该交易对`;
-    if(err && err.status === 451){
+    if(fetchFailed && fetchFailed.status === 451){
       reason = "访问被拒绝（HTTP 451），当前网络所在地区可能被限制访问";
-    } else if(err && (err.status === 400 || err.status === 404)){
-      reason = `交易对 ${coin.pair} 不存在`;
-    } else if(!err || !err.status){
+    } else if(fetchFailed && !fetchFailed.status){
       reason = `网络请求失败，可能是当前网络环境无法访问 ${exch} 接口`;
     }
     card.querySelector(".price").className = "price";
@@ -318,53 +339,65 @@ async function updateCoin(coin){
     card.querySelector(".change").className = "change flat";
     card.querySelector(".change").textContent = "";
     card.querySelector(".vol").textContent = "";
+    return;
   }
+
+  const { current, quoteVol } = live;
+  const baseEntry = basePriceCache[coin.pair];
+  const basePrice = baseEntry ? baseEntry.value : null;
+
+  let changePct = null;
+  if(basePrice && basePrice > 0){
+    changePct = (current - basePrice) / basePrice * 100;
+  }
+
+  const dirClass = changePct === null ? "flat" : (changePct >= 0 ? "up" : "down");
+  const arrow = changePct === null ? "" : (changePct >= 0 ? "+" : "");
+  const changeText = changePct === null ? "北京0点数据缺失" : `${arrow}${changePct.toFixed(2)}%`;
+
+  card.querySelector(".price").className = "price";
+  card.querySelector(".price").textContent = "$" + fmtPrice(current);
+  card.querySelector(".change").className = "change " + dirClass;
+  card.querySelector(".change").textContent = changeText;
+  card.querySelector(".vol").textContent = "额 " + fmtVol(quoteVol);
 }
 
-// ---- Binance: 现价 + 北京 0 点开盘价 ----
-async function fetchBinanceCoin(pair, midnightMs){
-  const [tickerData, klineData] = await Promise.all([
-    fetchBinance(`/api/v3/ticker/24hr?symbol=${pair}`),
-    fetchBinance(`/api/v3/klines?symbol=${pair}&interval=1m&startTime=${midnightMs}&limit=1`)
-  ]);
+async function refreshLivePrices(){
+  const binanceCoins = COINS.filter(c => c.source === "binance");
+  const okxCoins = COINS.filter(c => c.source === "okx");
 
-  const current = parseFloat(tickerData.lastPrice);
-  const quoteVol = parseFloat(tickerData.quoteVolume);
-  let basePrice = null;
-  if(Array.isArray(klineData) && klineData.length > 0){
-    basePrice = parseFloat(klineData[0][1]); // open price of that 1m candle
+  // ---- Binance：一次性批量拿所有币种的现价 ----
+  let binanceMap = {};
+  let binanceErr = null;
+  if(binanceCoins.length){
+    try{
+      const symbolsParam = encodeURIComponent(JSON.stringify(binanceCoins.map(c => c.pair)));
+      const data = await fetchBinance(`/api/v3/ticker/24hr?symbols=${symbolsParam}`);
+      if(Array.isArray(data)) data.forEach(t => { binanceMap[t.symbol] = t; });
+    }catch(err){ binanceErr = err; }
   }
-  return { current, quoteVol, basePrice };
-}
 
-// ---- OKX（原 OKCoin）: 现价 + 北京 0 点开盘价 ----
-// ticker: GET /api/v5/market/ticker?instId=BSV-USDT
-// 历史 1 分钟K线: GET /api/v5/market/history-candles?instId=...&bar=1m&after=<ms>
-// OKX "after" 的含义是"返回时间早于该时间戳的记录"，因此传入 (北京0点+1分钟)
-// 就能拿到覆盖北京0点这一分钟的K线，取其开盘价 open 作为基准价。
-async function fetchOkxCoin(instId, midnightMs){
-  const ticker = await fetchJSON(`${OKX_BASE}/api/v5/market/ticker?instId=${instId}`);
-  if(ticker.code !== "0" || !ticker.data || !ticker.data.length){
-    const err = new Error(ticker.msg || "OKX ticker error");
-    err.status = 404;
-    throw err;
+  // ---- OKX：一次性拿全市场现货行情，再按需筛选 ----
+  let okxMap = {};
+  let okxErr = null;
+  if(okxCoins.length){
+    try{
+      const data = await fetchJSON(`${OKX_BASE}/api/v5/market/tickers?instType=SPOT`);
+      if(data.code === "0" && Array.isArray(data.data)) data.data.forEach(t => { okxMap[t.instId] = t; });
+    }catch(err){ okxErr = err; }
   }
-  const t = ticker.data[0];
-  const current = parseFloat(t.last);
-  const quoteVol = parseFloat(t.volCcy24h); // 24h 成交额（计价货币，约等于 USDT）
 
-  let basePrice = null;
-  try{
-    const after = midnightMs + 60000;
-    const kline = await fetchJSON(
-      `${OKX_BASE}/api/v5/market/history-candles?instId=${instId}&bar=1m&after=${after}&limit=1`
-    );
-    if(kline.code === "0" && kline.data && kline.data.length){
-      basePrice = parseFloat(kline.data[0][1]); // [ts, open, high, low, close, ...]
+  COINS.forEach(c=>{
+    if(c.source === "binance"){
+      const t = binanceMap[c.pair];
+      const live = t ? { current: parseFloat(t.lastPrice), quoteVol: parseFloat(t.quoteVolume) } : null;
+      renderCoinCard(c, live, live ? null : binanceErr);
+    } else {
+      const t = okxMap[c.pair];
+      const live = t ? { current: parseFloat(t.last), quoteVol: parseFloat(t.volCcy24h) } : null;
+      renderCoinCard(c, live, live ? null : okxErr);
     }
-  }catch(e){ /* 拿不到北京0点K线时 basePrice 保持 null，上层会提示"数据缺失" */ }
-
-  return { current, quoteVol, basePrice };
+  });
 }
 
 /* ---------------- 恐慌贪婪指数（alternative.me，官方支持 CORS） ---------------- */
@@ -395,42 +428,65 @@ async function updateFearGreed(){
 }
 
 /* ---------------- AHR999 指数 ----------------
-   你指定的数据源 coinglass.com/zh/pro/i/ahr999 是一个前端由 JS 渲染的
-   页面，数值不在初始 HTML 里，浏览器抓不到；而 CoinGlass 官方 API
-   （open-api-v4.coinglass.com）所有接口都需要付费 CG-API-KEY 才能调用，
-   密钥直接写进前端代码会被任何人看到，也不适合公开页面。
-   这里先尝试一个免费的社区镜像接口作为替代，取不到时会明确提示原因，
-   并给出 CoinGlass 页面链接方便手动查看最新数值。
+   数据源：https://api.coinank.com/indicatorapi/getAhr999
+   这是 coinank.com 自己网站前端用的公开接口，不需要 apikey，已经验证
+   过可以直接请求成功。返回的是从 2011 年至今的完整历史数组：
+     timeList  —— 每天的时间戳（毫秒）
+     ahr999    —— 对应每天的 AHR999 指数值
+     avg       —— 对应每天的 200 日定投成本
+     valueList —— 对应每天的 BTC 价格
+   四个数组按下标一一对应，取最后一个下标就是最新一天（当天）的数值，
+   跟你截图里 CoinGlass 表格第一行的逻辑一样。
+   如果这个接口哪天失效或者不允许跨域调用了，会自动退回旧的社区镜像
+   接口，都拿不到时才提示手动查看。
 ------------------------------------------------ */
 async function updateAhr999(){
   const el = document.getElementById("idx-ahr999");
-  const candidateUrls = [
-    "https://dncapi.bxdapp.com/api/v3/coin/ahr999",
-  ];
 
-  for(const url of candidateUrls){
-    try{
-      const data = await fetchJSON(url);
-      const value = data?.data?.ahr999 ?? data?.ahr999 ?? data?.value;
-      if(value !== undefined && value !== null){
-        const num = parseFloat(value);
-        let color = "var(--text-dim)", label = "正常区间";
-        if(num < 0.45){ color = "var(--down)"; label = "抄底区间"; }
-        else if(num > 1.2){ color = "var(--up)"; label = "高估区间"; }
-
-        el.querySelector(".idx-value").className = "idx-value";
-        el.querySelector(".idx-value").textContent = num.toFixed(3);
-        el.querySelector(".idx-extra").innerHTML =
-          `<span class="idx-tag" style="background:${color}22;color:${color}">${label}</span>` +
-          ` <a href="https://www.coinglass.com/zh/pro/i/ahr999" target="_blank" rel="noopener" style="font-size:11px;color:var(--text-dim)">对照 CoinGlass →</a>`;
+  // 方案一：coinank.com 公开接口（免 key，实测可直接返回数据）
+  try{
+    const data = await fetchJSON("https://api.coinank.com/indicatorapi/getAhr999");
+    if(data && data.success && data.data){
+      const { timeList, ahr999 } = data.data;
+      if(Array.isArray(timeList) && Array.isArray(ahr999) && timeList.length){
+        const lastIdx = timeList.length - 1;
+        const num = parseFloat(ahr999[lastIdx]);
+        const dateStr = new Date(timeList[lastIdx]).toLocaleDateString("zh-CN", {
+          timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit"
+        });
+        renderAhr999(num, dateStr, "CoinAnk");
         return;
       }
-    }catch(err){ /* 尝试下一个接口 */ }
-  }
+    }
+  }catch(err){ /* 继续尝试下面的镜像接口 */ }
+
+  // 方案二：社区镜像接口兜底
+  try{
+    const data = await fetchJSON("https://dncapi.bxdapp.com/api/v3/coin/ahr999");
+    const value = data?.data?.ahr999 ?? data?.ahr999 ?? data?.value;
+    if(value !== undefined && value !== null){
+      renderAhr999(parseFloat(value), null, "镜像接口");
+      return;
+    }
+  }catch(err){ /* 两个数据源都失败 */ }
 
   el.querySelector(".idx-value").className = "idx-value";
   el.querySelector(".idx-value").innerHTML =
-    `<span class="fail">CoinGlass 官方接口需付费 API Key，无法在纯前端页面直接调用；免费镜像接口也暂时获取失败，可访问 <a href="https://www.coinglass.com/zh/pro/i/ahr999" target="_blank" rel="noopener">CoinGlass 页面</a> 手动查看最新值</span>`;
+    `<span class="fail">获取失败，可访问 <a href="https://www.coinglass.com/zh/pro/i/ahr999" target="_blank" rel="noopener">CoinGlass 页面</a> 手动查看最新值</span>`;
+}
+
+function renderAhr999(num, dateStr, sourceLabel){
+  const el = document.getElementById("idx-ahr999");
+  let color = "var(--text-dim)", label = "正常区间";
+  if(num < 0.45){ color = "var(--down)"; label = "抄底区间"; }
+  else if(num > 1.2){ color = "var(--up)"; label = "高估区间"; }
+
+  el.querySelector(".idx-value").className = "idx-value";
+  el.querySelector(".idx-value").textContent = num.toFixed(3);
+  const dateHtml = dateStr ? `<span style="font-size:11px;color:var(--text-dim)">${dateStr}</span> ` : "";
+  el.querySelector(".idx-extra").innerHTML =
+    `${dateHtml}<span class="idx-tag" style="background:${color}22;color:${color}">${label}</span>` +
+    ` <span style="font-size:11px;color:var(--text-dim)">· ${sourceLabel}</span>`;
 }
 
 /* ---------------- 美元兑离岸人民币 (USD/CNH) ----------------
@@ -511,31 +567,49 @@ function updateClock(){
     `北京时间 ${pad(bj.getHours())}:${pad(bj.getMinutes())}:${pad(bj.getSeconds())}`;
 }
 
-let refreshing = false;
-async function refreshAll(){
-  if(refreshing) return;
-  refreshing = true;
+let priceRefreshing = false;
+async function refreshPrices(){
+  if(priceRefreshing) return; // 避免上一次还没返回，下一次又叠加发出去
+  priceRefreshing = true;
+  try{
+    await ensureBasePrices();   // 只有跨天时才会真正发请求，平时直接返回
+    await refreshLivePrices();  // 每秒都会执行：2 个批量请求覆盖所有币种
+  }finally{
+    priceRefreshing = false;
+  }
+}
+
+let indicesRefreshing = false;
+async function refreshIndices(){
+  if(indicesRefreshing) return;
+  indicesRefreshing = true;
+  try{
+    await Promise.all([ updateFearGreed(), updateAhr999(), updateCnh() ]);
+  }finally{
+    indicesRefreshing = false;
+  }
+}
+
+async function refreshAllManual(){
   const btn = document.getElementById("refreshBtn");
   btn.disabled = true;
   btn.textContent = "刷新中…";
-
-  await Promise.all([
-    ...COINS.map(updateCoin),
-    updateFearGreed(),
-    updateAhr999(),
-    updateCnh()
-  ]);
-
+  await Promise.all([ refreshPrices(), refreshIndices() ]);
   btn.disabled = false;
   btn.textContent = "刷新数据";
-  refreshing = false;
 }
 
 renderSkeleton();
 updateClock();
 setInterval(updateClock, 1000);
-refreshAll();
-setInterval(refreshAll, 30000); // 每 30 秒自动刷新一次
+
+refreshPrices();
+refreshIndices();
+
+setInterval(refreshPrices, 1000);     // 价格：每 1 秒刷新一次
+setInterval(refreshIndices, 60000);   // 恐慌贪婪 / AHR999 / 汇率：每 60 秒刷新一次即可
+
+document.getElementById("refreshBtn").addEventListener("click", refreshAllManual);
 </script>
 </body>
 </html>
