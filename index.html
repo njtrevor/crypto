@@ -209,6 +209,7 @@
     <span>恐慌贪婪指数 / AHR999 / 汇率每 60 秒刷新一次</span>
     <span>AHR999 数据来自 coinank.com 公开接口，取历史数组最后一项即当天最新值，取不到时退回镜像接口</span>
     <span>美元兑人民币来自 apihz.cn 公共接口，为 USD/CNY 在岸中间价（非离岸 CNH），每日更新一次</span>
+    <span>BSV 数据来自 HTX（原火币），已改用单交易对轻量接口并支持双域名重试以提高稳定性</span>
     <span>提示：部分网络环境（如大陆网络）访问币安 / OKX / HTX 接口可能受限，若持续获取失败可尝试更换网络或自建代理</span>
     <span>提示：每秒高频请求交易所公开接口存在触发限流（429/418）的风险，如遇价格长时间不刷新可尝试降低频率</span>
   </footer>
@@ -239,7 +240,13 @@ const COINS = [
 ];
 
 const OKX_BASE = "https://www.okx.com";
-const HTX_BASE = "https://api.huobi.pro"; // HTX（原火币）公开行情接口，无需 apikey
+
+// HTX（原火币）公开行情接口，无需 apikey。给两个 base 域名做重试：
+// api-aws.huobi.pro 是官方给 AWS 网络环境优化的域名，两个都失败才算失败。
+const HTX_BASES = [
+  "https://api.huobi.pro",
+  "https://api-aws.huobi.pro",
+];
 
 // 币安有多个 base URL，data-api.binance.vision 是官方专门给"只读行情查询"用的域名，
 // 限制通常比主站 api.binance.com 更宽松；这里按顺序尝试，第一个能用的就用它。
@@ -349,6 +356,20 @@ async function fetchBinance(path){
   throw lastErr;
 }
 
+// 依次尝试多个 HTX base URL，全部失败才抛出最后一个错误。
+// path 例如 "/market/detail/merged?symbol=bsvusdt"
+async function fetchHtx(path){
+  let lastErr = null;
+  for(const base of HTX_BASES){
+    try{
+      return await fetchJSON(base + path);
+    }catch(err){
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
 /* ------------------------------------------------------------------
    价格刷新策略
    - 北京 0 点开盘价（basePrice，涨跌幅的基准）一天只变一次，所以只在
@@ -385,7 +406,7 @@ async function fetchOneMinuteOpenAt(source, pair, midnightMs){
     // 所以拉最近 2000 根 1 分钟K线（约 33 小时，足够覆盖今天的 0 点），
     // 再在返回结果里找 id（K线开盘时间，单位秒）等于北京 0 点的那一根。
     const targetSec = Math.floor(midnightMs / 1000);
-    const data = await fetchJSON(`${HTX_BASE}/market/history/kline?symbol=${pair}&period=1min&size=2000`);
+    const data = await fetchHtx(`/market/history/kline?symbol=${pair}&period=1min&size=2000`);
     if(data.status === "ok" && Array.isArray(data.data)){
       const hit = data.data.find(k => k.id === targetSec);
       if(hit) return parseFloat(hit.open);
@@ -488,14 +509,21 @@ async function refreshLivePrices(){
     }catch(err){ okxErr = err; }
   }
 
-  // ---- HTX（原火币）：一次性拿全市场行情，再按需筛选 ----
+  // ---- HTX（原火币）：per-symbol 轻量接口，而不是全市场 tickers ----
+  // /market/tickers 会把所有交易对都返回，响应体很大，在 1 秒刷新一次的
+  // 频率下偶尔会超时或失败；改成只请求需要的这一个交易对
+  // （/market/detail/merged?symbol=xxx），响应体小得多，更稳定。
   let htxMap = {};
   let htxErr = null;
   if(htxCoins.length){
-    try{
-      const data = await fetchJSON(`${HTX_BASE}/market/tickers`);
-      if(data.status === "ok" && Array.isArray(data.data)) data.data.forEach(t => { htxMap[t.symbol] = t; });
-    }catch(err){ htxErr = err; }
+    const results = await Promise.all(htxCoins.map(async c=>{
+      try{
+        const data = await fetchHtx(`/market/detail/merged?symbol=${c.pair}`);
+        if(data.status === "ok" && data.tick) return { pair: c.pair, tick: data.tick };
+      }catch(err){ htxErr = err; }
+      return null;
+    }));
+    results.forEach(r => { if(r) htxMap[r.pair] = r.tick; });
   }
 
   const needsFallback = []; // 主源没拿到、且配置了 fallback 的币种，留到后面单独处理
@@ -523,7 +551,7 @@ async function refreshLivePrices(){
   for(const c of needsFallback){
     try{
       if(c.fallback.source === "htx"){
-        const t = htxMap[c.fallback.pair] || (await fetchJSON(`${HTX_BASE}/market/detail/merged?symbol=${c.fallback.pair}`)).tick;
+        const t = htxMap[c.fallback.pair] || (await fetchHtx(`/market/detail/merged?symbol=${c.fallback.pair}`)).tick;
         if(t) renderCoinCard(c, { current: parseFloat(t.close), quoteVol: parseFloat(t.vol) }, null, `${c.fallback.source.toUpperCase()} 兜底`);
         else renderCoinCard(c, null, null);
       } else {
@@ -655,12 +683,21 @@ async function updateCnh(){
   }
 }
 
+// 之前的写法用 now.getTimezoneOffset()（访问者浏览器自己的时区）跟
+// getHours() 这类"按本地时区解读"的方法混在一起算，只有访问者浏览器
+// 本身就是 UTC+0 时才碰巧算对，其他时区的访问者看到的都是错的。
+// 改成用 Intl.DateTimeFormat 指定 timeZone: "Asia/Shanghai"，直接问
+// 浏览器"北京时间现在几点"，跟访问者自己所在时区完全没关系，才是对的。
+const bjClockFormatter = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Shanghai",
+  hour12: false,
+  hour: "2-digit", minute: "2-digit", second: "2-digit"
+});
 function updateClock(){
-  const now = new Date();
-  const bj = new Date(now.getTime() + (8*60 - now.getTimezoneOffset())*60000);
-  const pad = n => String(n).padStart(2,"0");
+  const parts = bjClockFormatter.formatToParts(new Date());
+  const get = type => parts.find(p => p.type === type).value;
   document.getElementById("clock").textContent =
-    `北京时间 ${pad(bj.getHours())}:${pad(bj.getMinutes())}:${pad(bj.getSeconds())}`;
+    `北京时间 ${get("hour")}:${get("minute")}:${get("second")}`;
 }
 
 let priceRefreshing = false;
