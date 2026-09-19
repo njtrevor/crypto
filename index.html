@@ -46,13 +46,6 @@
     text-align:right;font-size:12px;color:var(--text-dim);
     display:flex;flex-direction:column;gap:6px;align-items:flex-end;
   }
-  .refresh-btn{
-    background:var(--card);border:1px solid var(--card-border);
-    color:var(--text-main);border-radius:8px;padding:6px 12px;
-    font-size:12px;cursor:pointer;
-  }
-  .refresh-btn:hover{border-color:var(--accent);}
-  .refresh-btn:disabled{opacity:.5;cursor:default;}
 
   .grid{
     display:grid;
@@ -197,7 +190,6 @@
     </div>
     <div class="meta">
       <span id="clock">--</span>
-      <button class="refresh-btn" id="refreshBtn">刷新数据</button>
     </div>
   </header>
 
@@ -261,9 +253,27 @@ const BINANCE_BASES = [
 
 function fmtPrice(p){
   if(p === null || p === undefined || isNaN(p)) return "--";
-  if(p >= 1000) return p.toLocaleString(undefined,{maximumFractionDigits:2,minimumFractionDigits:2});
-  if(p >= 1)    return p.toFixed(4);
-  return p.toPrecision(4);
+  if(p < 0) return "--";
+
+  // >= 1：统一千分位 + 保留 2 位小数，例如 81,250.00
+  if(p >= 1){
+    return p.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  }
+
+  // < 1：把小数点后一长串 0 压缩成 0.0{n}，n 是 0 的个数，
+  // 后面接 3 位有效数字（四舍五入）。例如 0.0000581 -> "0.0{4}581"。
+  // 小数点后没有多余 0（0.1~0.999 这一段）就正常显示 3 位有效数字。
+  // 用 toExponential 而不是手动截字符串，是为了让四舍五入正确
+  // （比如 0.0000999 应该进位成 0.0{3}100，而不是被截断成 999）。
+  if(p === 0) return "0.00";
+  const expStr = p.toExponential(2);              // 例如 "5.81e-5"
+  const m = expStr.match(/^(\d)\.(\d{2})e-(\d+)$/);
+  if(!m) return p.toString();
+  const sig = m[1] + m[2];                         // 3 位有效数字
+  const zeroCount = parseInt(m[3], 10) - 1;         // 小数点后 0 的个数
+
+  if(zeroCount <= 0) return "0." + sig;             // 0.1 ~ 0.999...
+  return `0.0{${zeroCount}}${sig}`;
 }
 
 function fmtVol(v){
@@ -723,15 +733,6 @@ async function refreshIndices(){
   }
 }
 
-async function refreshAllManual(){
-  const btn = document.getElementById("refreshBtn");
-  btn.disabled = true;
-  btn.textContent = "刷新中…";
-  await Promise.all([ refreshPrices(), refreshIndices() ]);
-  btn.disabled = false;
-  btn.textContent = "刷新数据";
-}
-
 renderSkeleton();
 updateClock();
 setInterval(updateClock, 1000);
@@ -741,8 +742,6 @@ refreshIndices();
 
 setInterval(refreshPrices, 1000);     // 价格：每 1 秒刷新一次
 setInterval(refreshIndices, 60000);   // 恐慌贪婪 / AHR999 / 汇率：每 60 秒刷新一次即可
-
-document.getElementById("refreshBtn").addEventListener("click", refreshAllManual);
 </script>
 </body>
 </html>
