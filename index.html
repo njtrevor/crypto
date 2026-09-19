@@ -66,6 +66,7 @@
     padding:18px 18px 16px;
     min-height:112px;
     position:relative;
+    overflow:hidden;
   }
   .card.idx{
     background:linear-gradient(160deg,#15161a,#191a20);
@@ -73,34 +74,52 @@
   .row-top{
     display:flex;justify-content:space-between;align-items:baseline;
     margin-bottom:10px;
+    padding-right:44px; /* 给右上角的badge留位置，避免和名字重叠 */
   }
-  .name{font-size:14.5px;font-weight:600;}
+  .name{
+    font-size:14.5px;font-weight:600;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
   .sym{font-family:var(--mono);font-size:12px;color:var(--text-dim);}
   .price{
     font-family:var(--mono);font-size:25px;font-weight:700;
     letter-spacing:.2px;margin-bottom:9px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
   .price.loading{color:var(--text-dim);font-weight:400;font-size:15px;}
   .row-bottom{
     display:flex;justify-content:space-between;align-items:baseline;
     font-family:var(--mono);font-size:14px;
+    gap:6px;
   }
-  .change{font-weight:700;}
+  .change{font-weight:700;white-space:nowrap;}
   .up{color:var(--up);}
   .down{color:var(--down);}
   .flat{color:var(--text-dim);}
-  .vol{color:var(--text-dim);font-size:12px;}
+  .vol{
+    color:var(--text-dim);font-size:12px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    text-align:right;
+  }
   .badge{
     position:absolute;top:16px;right:18px;
     font-size:11px;color:var(--text-dim);
     border:1px solid var(--card-border);border-radius:6px;
     padding:2px 6px;
+    white-space:nowrap;
   }
-  .idx-desc{font-size:11.5px;color:var(--text-dim);margin-top:2px;line-height:1.5;}
+  .idx-desc{
+    font-size:11.5px;color:var(--text-dim);margin-top:2px;line-height:1.5;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
   .idx-value{font-family:var(--mono);font-size:26px;font-weight:700;margin:6px 0 4px;}
   .idx-tag{
     display:inline-block;font-size:12px;padding:2px 9px;border-radius:20px;
     font-weight:600;
+  }
+  .idx-extra{
+    display:flex;align-items:center;flex-wrap:wrap;gap:6px;
+    font-size:12px;
   }
   .fail{color:var(--text-dim);font-size:12.5px;line-height:1.6;}
   .fail a{color:var(--accent);text-decoration:none;}
@@ -111,9 +130,57 @@
     border-top:1px solid var(--card-border);padding-top:16px;
     display:flex;flex-wrap:wrap;gap:6px 18px;
   }
-  @media (max-width:520px){
-    .grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));}
-    .price{font-size:20px;}
+
+  /* ------------------------------------------------------------
+     移动端：目标是一行放下 3~4 张卡片，而不是简单地整体缩小字号。
+     做法：卡片内边距、圆角、行间距都收紧，badge 缩到最小可读尺寸，
+     文字超出用省略号截断而不是换行撑高卡片，保证每张卡片高度整齐。
+  ------------------------------------------------------------ */
+  @media (max-width:700px){
+    body{padding:16px 10px 40px;}
+    header{margin-bottom:16px;}
+    .logo{width:36px;height:36px;font-size:16px;border-radius:10px;}
+    h1{font-size:17px;}
+    .sub{font-size:11px;}
+
+    .grid{grid-template-columns:repeat(4, 1fr);gap:8px;}
+    .card{
+      padding:9px 9px 8px;
+      min-height:0;
+      border-radius:10px;
+    }
+    .row-top{padding-right:0;margin-bottom:5px;display:block;}
+    .badge{
+      position:static;display:inline-block;
+      font-size:8.5px;padding:1px 4px;border-radius:4px;
+      margin-bottom:3px;
+    }
+    .name{
+      font-size:10.5px;display:block;
+      max-width:100%;
+    }
+    .price{font-size:13.5px;margin-bottom:4px;letter-spacing:0;}
+    .price.loading{font-size:9px;}
+    .row-bottom{
+      flex-direction:column;align-items:flex-start;gap:1px;
+      font-size:10px;
+    }
+    .vol{font-size:8.5px;text-align:left;max-width:100%;}
+    .fail{font-size:9px;line-height:1.4;}
+
+    .idx-desc{display:none;} /* 副标题在小屏上省掉，节省高度 */
+    .idx-value{font-size:15px;margin:2px 0 3px;}
+    .idx-tag{font-size:9px;padding:1px 6px;}
+    .idx-extra{font-size:9px;gap:4px;}
+
+    footer{font-size:10px;gap:4px 12px;margin-top:20px;padding-top:12px;}
+  }
+  @media (max-width:360px){
+    .grid{grid-template-columns:repeat(3, 1fr);gap:7px;}
+    .card{padding:10px 10px 9px;}
+    .name{font-size:11px;}
+    .price{font-size:15px;}
+    .row-bottom{font-size:10.5px;}
   }
 </style>
 </head>
@@ -137,7 +204,7 @@
   <div class="grid" id="grid"></div>
 
   <footer>
-    <span>价格 / 24h 成交额：OKB 来自 OKX；BSV 优先 OKX，拿不到时自动切换 HTX；其余来自 Binance，每秒刷新一次</span>
+    <span>价格 / 24h 成交额：OKB 来自 OKX；BSV 直接来自 HTX（原火币）；其余来自 Binance，每秒刷新一次</span>
     <span>涨跌幅 = 现价 相对 北京时间当日 00:00 价格（基准价每天只拉取一次并缓存）</span>
     <span>恐慌贪婪指数 / AHR999 / 汇率每 60 秒刷新一次</span>
     <span>AHR999 数据来自 coinank.com 公开接口，取历史数组最后一项即当天最新值，取不到时退回镜像接口</span>
@@ -151,9 +218,11 @@
 /* ------------------------------------------------------------------
    配置区：币种列表
    多数币种走 Binance（USDT 交易对）。OKB 走 OKX。
-   BSV 优先走 OKX，如果 OKX 拿不到（该交易对未上线/被下架等情况），
-   自动改用 HTX（原火币）的公开行情接口兜底，交易对格式为小写 "bsvusdt"。
-   source: "binance" | "okx"，fallback 可选，结构同 source/pair。
+   BSV 在 OKX 上一直取不到稳定数据，改成直接走 HTX（原火币）的公开
+   行情接口，交易对格式为小写 "bsvusdt"。
+   source: "binance" | "okx" | "htx"。fallback 字段是通用兜底机制
+   （结构同 source/pair），当前没有币种用到，留着方便以后某个币种
+   主数据源不稳定时可以直接加一行兜底配置。
 ------------------------------------------------------------------- */
 const COINS = [
   { name: "比特币",     sym: "BTC",  pair: "BTCUSDT",   source: "binance" },
@@ -161,8 +230,7 @@ const COINS = [
   { name: "比特币现金", sym: "BCH",  pair: "BCHUSDT",   source: "binance" },
   { name: "eCash",      sym: "XEC",  pair: "XECUSDT",   source: "binance" },
   { name: "Arbitrum",   sym: "ARB",  pair: "ARBUSDT",   source: "binance" },
-  { name: "BSV",        sym: "BSV",  pair: "BSV-USDT",  source: "okx",
-    fallback: { source: "htx", pair: "bsvusdt" } },
+  { name: "BSV",        sym: "BSV",  pair: "bsvusdt",   source: "htx"     },
   { name: "Uniswap",    sym: "UNI",  pair: "UNIUSDT",   source: "binance" },
   { name: "瑞波币",     sym: "XRP",  pair: "XRPUSDT",   source: "binance" },
   { name: "狗狗币",     sym: "DOGE", pair: "DOGEUSDT",  source: "binance" },
@@ -355,7 +423,7 @@ function renderCoinCard(coin, live, fetchFailed, sourceLabel){
   if(!card) return;
 
   if(fetchFailed || !live){
-    const exch = coin.source === "okx" ? "OKX" : (coin.source === "binance" ? "Binance" : coin.source);
+    const exch = coin.source === "okx" ? "OKX" : (coin.source === "htx" ? "HTX" : (coin.source === "binance" ? "Binance" : coin.source));
     const fallbackExch = coin.fallback ? (coin.fallback.source === "htx" ? "HTX" : coin.fallback.source) : null;
     let reason = fallbackExch
       ? `该币种在 ${exch} 和兜底的 ${fallbackExch} 上都拿不到行情`
@@ -397,6 +465,7 @@ function renderCoinCard(coin, live, fetchFailed, sourceLabel){
 async function refreshLivePrices(){
   const binanceCoins = COINS.filter(c => c.source === "binance");
   const okxCoins = COINS.filter(c => c.source === "okx");
+  const htxCoins = COINS.filter(c => c.source === "htx");
 
   // ---- Binance：一次性批量拿所有币种的现价 ----
   let binanceMap = {};
@@ -419,53 +488,51 @@ async function refreshLivePrices(){
     }catch(err){ okxErr = err; }
   }
 
-  // ---- 先按主数据源渲染，同时记录哪些币种主源没拿到、且配置了 fallback ----
-  const needsFallback = []; // [{coin, fallbackSource}]
-  COINS.forEach(c=>{
-    if(c.source === "binance"){
-      const t = binanceMap[c.pair];
-      if(t){
-        renderCoinCard(c, { current: parseFloat(t.lastPrice), quoteVol: parseFloat(t.quoteVolume) }, null);
-      } else if(c.fallback){
-        needsFallback.push(c);
-      } else {
-        renderCoinCard(c, null, binanceErr);
-      }
-    } else if(c.source === "okx"){
-      const t = okxMap[c.pair];
-      if(t){
-        renderCoinCard(c, { current: parseFloat(t.last), quoteVol: parseFloat(t.volCcy24h) }, null);
-      } else if(c.fallback){
-        needsFallback.push(c);
-      } else {
-        renderCoinCard(c, null, okxErr);
-      }
-    }
-  });
-
-  if(needsFallback.length === 0) return;
-
-  // ---- 兜底：目前只有 HTX，按需批量拉取一次全市场行情 ----
-  const htxNeeded = needsFallback.filter(c => c.fallback.source === "htx");
+  // ---- HTX（原火币）：一次性拿全市场行情，再按需筛选 ----
   let htxMap = {};
   let htxErr = null;
-  if(htxNeeded.length){
+  if(htxCoins.length){
     try{
       const data = await fetchJSON(`${HTX_BASE}/market/tickers`);
       if(data.status === "ok" && Array.isArray(data.data)) data.data.forEach(t => { htxMap[t.symbol] = t; });
     }catch(err){ htxErr = err; }
   }
 
-  needsFallback.forEach(c=>{
-    if(c.fallback.source === "htx"){
-      const t = htxMap[c.fallback.pair];
-      if(t){
-        renderCoinCard(c, { current: parseFloat(t.close), quoteVol: parseFloat(t.vol) }, null, "HTX 兜底");
-      } else {
-        renderCoinCard(c, null, htxErr);
-      }
+  const needsFallback = []; // 主源没拿到、且配置了 fallback 的币种，留到后面单独处理
+
+  COINS.forEach(c=>{
+    if(c.source === "binance"){
+      const t = binanceMap[c.pair];
+      if(t) renderCoinCard(c, { current: parseFloat(t.lastPrice), quoteVol: parseFloat(t.quoteVolume) }, null);
+      else if(c.fallback) needsFallback.push(c);
+      else renderCoinCard(c, null, binanceErr);
+    } else if(c.source === "okx"){
+      const t = okxMap[c.pair];
+      if(t) renderCoinCard(c, { current: parseFloat(t.last), quoteVol: parseFloat(t.volCcy24h) }, null);
+      else if(c.fallback) needsFallback.push(c);
+      else renderCoinCard(c, null, okxErr);
+    } else if(c.source === "htx"){
+      const t = htxMap[c.pair];
+      if(t) renderCoinCard(c, { current: parseFloat(t.close), quoteVol: parseFloat(t.vol) }, null);
+      else if(c.fallback) needsFallback.push(c);
+      else renderCoinCard(c, null, htxErr);
     }
   });
+
+  // ---- 兜底：给未来可能配置了 fallback 的币种预留（目前没有币种会走到这里）----
+  for(const c of needsFallback){
+    try{
+      if(c.fallback.source === "htx"){
+        const t = htxMap[c.fallback.pair] || (await fetchJSON(`${HTX_BASE}/market/detail/merged?symbol=${c.fallback.pair}`)).tick;
+        if(t) renderCoinCard(c, { current: parseFloat(t.close), quoteVol: parseFloat(t.vol) }, null, `${c.fallback.source.toUpperCase()} 兜底`);
+        else renderCoinCard(c, null, null);
+      } else {
+        renderCoinCard(c, null, null);
+      }
+    }catch(e){
+      renderCoinCard(c, null, e);
+    }
+  }
 }
 
 /* ---------------- 恐慌贪婪指数（alternative.me，官方支持 CORS） ---------------- */
