@@ -125,8 +125,8 @@
   }
 
   /* ------------------------------------------------------------
-     移动端：目标是一行放下 3~4 张卡片，而不是简单地整体缩小字号。
-     做法：卡片内边距、圆角、行间距都收紧，badge 缩到最小可读尺寸，
+     移动端：固定一行 3 张卡片（不用 4，太挤），卡片内边距、字号按
+     3 列的可用宽度重新调整，比 4 列时能松一些。
      文字超出用省略号截断而不是换行撑高卡片，保证每张卡片高度整齐。
   ------------------------------------------------------------ */
   @media (max-width:700px){
@@ -136,44 +136,46 @@
     h1{font-size:17px;}
     .sub{font-size:11px;}
 
-    .grid{grid-template-columns:repeat(4, 1fr);gap:8px;}
+    .grid{grid-template-columns:repeat(3, 1fr);gap:9px;}
     .card{
-      padding:9px 9px 8px;
+      padding:11px 11px 10px;
       min-height:0;
-      border-radius:10px;
+      border-radius:11px;
     }
-    .row-top{padding-right:0;margin-bottom:5px;display:block;}
+    .row-top{padding-right:0;margin-bottom:6px;display:block;}
     .badge{
       position:static;display:inline-block;
-      font-size:8.5px;padding:1px 4px;border-radius:4px;
-      margin-bottom:3px;
+      font-size:9.5px;padding:2px 5px;border-radius:5px;
+      margin-bottom:4px;
     }
     .name{
-      font-size:10.5px;display:block;
+      font-size:12px;display:block;
       max-width:100%;
     }
-    .price{font-size:13.5px;margin-bottom:4px;letter-spacing:0;}
-    .price.loading{font-size:9px;}
+    .price{font-size:15.5px;margin-bottom:5px;letter-spacing:0;}
+    .price.loading{font-size:10.5px;}
     .row-bottom{
-      flex-direction:column;align-items:flex-start;gap:1px;
-      font-size:10px;
+      flex-direction:column;align-items:flex-start;gap:2px;
+      font-size:11px;
     }
-    .vol{font-size:8.5px;text-align:left;max-width:100%;}
-    .fail{font-size:9px;line-height:1.4;}
+    .vol{font-size:9.5px;text-align:left;max-width:100%;}
+    .fail{font-size:10px;line-height:1.4;}
 
     .idx-desc{display:none;} /* 副标题在小屏上省掉，节省高度 */
-    .idx-value{font-size:15px;margin:2px 0 3px;}
-    .idx-tag{font-size:9px;padding:1px 6px;}
-    .idx-extra{font-size:9px;gap:4px;}
+    .idx-value{font-size:17px;margin:2px 0 4px;}
+    .idx-tag{font-size:10px;padding:1px 7px;}
+    .idx-extra{font-size:10px;gap:5px;}
 
     footer{font-size:10px;gap:4px 12px;margin-top:20px;padding-top:12px;}
   }
-  @media (max-width:360px){
-    .grid{grid-template-columns:repeat(3, 1fr);gap:7px;}
-    .card{padding:10px 10px 9px;}
-    .name{font-size:11px;}
-    .price{font-size:15px;}
-    .row-bottom{font-size:10.5px;}
+  @media (max-width:380px){
+    /* 屏幕更窄时依然保持 3 列，只收紧间距/内边距，不再放大字号 */
+    .grid{gap:6px;}
+    .card{padding:9px 9px 8px;border-radius:10px;}
+    .name{font-size:10.5px;}
+    .price{font-size:13.5px;margin-bottom:4px;}
+    .row-bottom{font-size:9.5px;}
+    .vol{font-size:8.5px;}
   }
 </style>
 </head>
