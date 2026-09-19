@@ -274,7 +274,7 @@ function fmtPrice(p){
   const sig = m[1] + m[2];                         // 3 位有效数字
   const zeroCount = parseInt(m[3], 10) - 1;         // 小数点后 0 的个数
 
-  if(zeroCount <= 0) return "0." + sig;             // 0.1 ~ 0.999...
+  if(zeroCount <= 0.001) return "0." + sig;             // 0.1 ~ 0.999...
   return `0.0{${zeroCount}}${sig}`;
 }
 
