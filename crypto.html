@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>加密货币行情 · 实时看板</title>
+<style>
+  :root{
+    --bg:#0c0d10;
+    --card:#15161a;
+    --card-border:#232429;
+    --text-main:#f2f2f2;
+    --text-dim:#8a8d96;
+    --up:#ef4444;      /* 涨 = 红 */
+    --down:#22c55e;    /* 跌 = 绿 */
+    --accent:#3b82f6;
+    --mono: "SF Mono","JetBrains Mono","Consolas",monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text-main);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    padding:28px 20px 60px;
+  }
+  .wrap{max-width:1180px;margin:0 auto;}
+  header{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    margin-bottom:26px;
+    flex-wrap:wrap;
+    gap:14px;
+  }
+  .title-block{display:flex;align-items:center;gap:14px;}
+  .logo{
+    width:44px;height:44px;border-radius:12px;
+    background:linear-gradient(135deg,#1e3a8a,#3b82f6);
+    display:flex;align-items:center;justify-content:center;
+    font-size:20px;flex:none;
+  }
+  h1{font-size:21px;margin:0;letter-spacing:.2px;}
+  .sub{color:var(--text-dim);font-size:13px;margin-top:4px;}
+  .meta{
+    text-align:right;font-size:12px;color:var(--text-dim);
+    display:flex;flex-direction:column;gap:6px;align-items:flex-end;
+  }
+  .refresh-btn{
+    background:var(--card);border:1px solid var(--card-border);
+    color:var(--text-main);border-radius:8px;padding:6px 12px;
+    font-size:12px;cursor:pointer;
+  }
+  .refresh-btn:hover{border-color:var(--accent);}
+  .refresh-btn:disabled{opacity:.5;cursor:default;}
+
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(255px,1fr));
+    gap:14px;
+  }
+  .card{
+    background:var(--card);
+    border:1px solid var(--card-border);
+    border-radius:14px;
+    padding:18px 18px 16px;
+    min-height:112px;
+    position:relative;
+  }
+  .card.idx{
+    background:linear-gradient(160deg,#15161a,#191a20);
+  }
+  .row-top{
+    display:flex;justify-content:space-between;align-items:baseline;
+    margin-bottom:10px;
+  }
+  .name{font-size:14.5px;font-weight:600;}
+  .sym{font-family:var(--mono);font-size:12px;color:var(--text-dim);}
+  .price{
+    font-family:var(--mono);font-size:25px;font-weight:700;
+    letter-spacing:.2px;margin-bottom:9px;
+  }
+  .price.loading{color:var(--text-dim);font-weight:400;font-size:15px;}
+  .row-bottom{
+    display:flex;justify-content:space-between;align-items:baseline;
+    font-family:var(--mono);font-size:14px;
+  }
+  .change{font-weight:700;}
+  .up{color:var(--up);}
+  .down{color:var(--down);}
+  .flat{color:var(--text-dim);}
+  .vol{color:var(--text-dim);font-size:12px;}
+  .badge{
+    position:absolute;top:16px;right:18px;
+    font-size:11px;color:var(--text-dim);
+    border:1px solid var(--card-border);border-radius:6px;
+    padding:2px 6px;
+  }
+  .idx-desc{font-size:11.5px;color:var(--text-dim);margin-top:2px;line-height:1.5;}
+  .idx-value{font-family:var(--mono);font-size:26px;font-weight:700;margin:6px 0 4px;}
+  .idx-tag{
+    display:inline-block;font-size:12px;padding:2px 9px;border-radius:20px;
+    font-weight:600;
+  }
+  .fail{color:var(--text-dim);font-size:12.5px;line-height:1.6;}
+  .fail a{color:var(--accent);text-decoration:none;}
+  .fail a:hover{text-decoration:underline;}
+
+  footer{
+    margin-top:34px;font-size:12px;color:var(--text-dim);
+    border-top:1px solid var(--card-border);padding-top:16px;
+    display:flex;flex-wrap:wrap;gap:6px 18px;
+  }
+  @media (max-width:520px){
+    .grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));}
+    .price{font-size:20px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="title-block">
+      <div class="logo">💹</div>
+      <div>
+        <h1>虚拟货币行情</h1>
+        <div class="sub">价格 · 涨跌幅（北京时间 0 点基准）· 市场指数</div>
+      </div>
+    </div>
+    <div class="meta">
+      <span id="clock">--</span>
+      <button class="refresh-btn" id="refreshBtn" onclick="refreshAll()">刷新数据</button>
+    </div>
+  </header>
+
+  <div class="grid" id="grid"></div>
+
+  <footer>
+    <span>价格 / 24h 成交额来自 Binance API（USDT 计价）</span>
+    <span>涨跌幅 = 现价 相对 北京时间当日 00:00 价格</span>
+    <span>恐慌贪婪指数来自 alternative.me</span>
+    <span>AHR999 为尝鲜接口，若无法获取会显示原因</span>
+  </footer>
+</div>
+
+<script>
+/* ------------------------------------------------------------------
+   配置区：币种列表（Binance 交易对，全部以 USDT 计价）
+   XEC / BSV / OKB 在 Binance 现货不一定存在交易对，抓取失败会在卡片上
+   直接提示，不会影响其它币种显示。
+------------------------------------------------------------------- */
+const COINS = [
+  { name: "比特币",     sym: "BTC",  pair: "BTCUSDT"  },
+  { name: "以太坊",     sym: "ETH",  pair: "ETHUSDT"  },
+  { name: "比特币现金", sym: "BCH",  pair: "BCHUSDT"  },
+  { name: "eCash",      sym: "XEC",  pair: "XECUSDT"  },
+  { name: "Arbitrum",   sym: "ARB",  pair: "ARBUSDT"  },
+  { name: "BSV",        sym: "BSV",  pair: "BSVUSDT"  },
+  { name: "Uniswap",    sym: "UNI",  pair: "UNIUSDT"  },
+  { name: "瑞波币",     sym: "XRP",  pair: "XRPUSDT"  },
+  { name: "狗狗币",     sym: "DOGE", pair: "DOGEUSDT" },
+  { name: "OKB",        sym: "OKB",  pair: "OKBUSDT"  },
+  { name: "BNB",        sym: "BNB",  pair: "BNBUSDT"  },
+];
+
+const BINANCE_BASE = "https://api.binance.com";
+
+/* ------------------------------------------------------------------ */
+
+function fmtPrice(p){
+  if(p === null || p === undefined || isNaN(p)) return "--";
+  if(p >= 1000) return p.toLocaleString(undefined,{maximumFractionDigits:2,minimumFractionDigits:2});
+  if(p >= 1)    return p.toFixed(4);
+  return p.toPrecision(4);
+}
+
+function fmtVol(v){
+  if(v === null || v === undefined || isNaN(v)) return "";
+  if(v >= 1e8) return (v/1e8).toFixed(1) + "亿";
+  if(v >= 1e4) return (v/1e4).toFixed(1) + "万";
+  return v.toFixed(0);
+}
+
+// 计算「今天北京时间 00:00」对应的 UTC 毫秒时间戳
+function beijingMidnightUTC(){
+  const now = new Date();
+  // 当前 UTC 毫秒 + 8 小时 = 北京时间
+  const bjNow = new Date(now.getTime() + 8*3600*1000);
+  // 取北京时间的年月日，构造北京 00:00，再换算回 UTC 毫秒
+  const y = bjNow.getUTCFullYear();
+  const m = bjNow.getUTCMonth();
+  const d = bjNow.getUTCDate();
+  const bjMidnightAsUTCFields = Date.UTC(y, m, d, 0, 0, 0); // 这其实是"当作UTC"的 00:00
+  return bjMidnightAsUTCFields - 8*3600*1000; // 减8小时才是真正对应的 UTC 时间戳
+}
+
+function cardId(pair){ return "card-" + pair; }
+
+function renderSkeleton(){
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+
+  // 指数卡片：恐慌贪婪指数 + AHR999
+  grid.appendChild(buildIndexCard("fng", "恐慌与贪婪指数", "Fear & Greed Index"));
+  grid.appendChild(buildIndexCard("ahr999", "AHR999 囤币指数", "比特币定投指标"));
+
+  COINS.forEach(c=>{
+    const card = document.createElement("div");
+    card.className = "card";
+    card.id = cardId(c.pair);
+    card.innerHTML = `
+      <div class="badge">${c.sym}</div>
+      <div class="row-top">
+        <div class="name">${c.name}</div>
+      </div>
+      <div class="price loading">加载中…</div>
+      <div class="row-bottom">
+        <span class="change flat">--</span>
+        <span class="vol"></span>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function buildIndexCard(id, title, subtitle){
+  const card = document.createElement("div");
+  card.className = "card idx";
+  card.id = "idx-" + id;
+  card.innerHTML = `
+    <div class="name">${title}</div>
+    <div class="idx-desc">${subtitle}</div>
+    <div class="idx-value loading">加载中…</div>
+    <div class="idx-extra"></div>
+  `;
+  return card;
+}
+
+async function fetchJSON(url){
+  const res = await fetch(url);
+  if(!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+async function updateCoin(coin){
+  const card = document.getElementById(cardId(coin.pair));
+  try{
+    const midnight = beijingMidnightUTC();
+
+    const [tickerData, klineData] = await Promise.all([
+      fetchJSON(`${BINANCE_BASE}/api/v3/ticker/24hr?symbol=${coin.pair}`),
+      fetchJSON(`${BINANCE_BASE}/api/v3/klines?symbol=${coin.pair}&interval=1m&startTime=${midnight}&limit=1`)
+    ]);
+
+    const current = parseFloat(tickerData.lastPrice);
+    const quoteVol = parseFloat(tickerData.quoteVolume);
+
+    let basePrice = null;
+    if(Array.isArray(klineData) && klineData.length > 0){
+      basePrice = parseFloat(klineData[0][1]); // open price of that 1m candle
+    }
+
+    let changePct = null;
+    if(basePrice && basePrice > 0){
+      changePct = (current - basePrice) / basePrice * 100;
+    }
+
+    const dirClass = changePct === null ? "flat" : (changePct >= 0 ? "up" : "down");
+    const arrow = changePct === null ? "" : (changePct >= 0 ? "+" : "");
+    const changeText = changePct === null ? "北京0点数据缺失" : `${arrow}${changePct.toFixed(2)}%`;
+
+    card.querySelector(".price").className = "price";
+    card.querySelector(".price").textContent = "$" + fmtPrice(current);
+    card.querySelector(".change").className = "change " + dirClass;
+    card.querySelector(".change").textContent = changeText;
+    card.querySelector(".vol").textContent = "额 " + fmtVol(quoteVol);
+
+  }catch(err){
+    card.querySelector(".price").className = "price";
+    card.querySelector(".price").innerHTML = `<span class="fail">获取失败（该币种可能未在 Binance 上线 USDT 交易对）</span>`;
+    card.querySelector(".change").className = "change flat";
+    card.querySelector(".change").textContent = "";
+    card.querySelector(".vol").textContent = "";
+  }
+}
+
+/* ---------------- 恐慌贪婪指数（alternative.me，官方支持 CORS） ---------------- */
+async function updateFearGreed(){
+  const el = document.getElementById("idx-fng");
+  try{
+    const data = await fetchJSON("https://api.alternative.me/fng/?limit=1");
+    const item = data.data[0];
+    const val = item.value;
+    const label = item.value_classification;
+
+    let color = "var(--text-dim)";
+    if(val < 25) color = "var(--down)";        // 极度恐慌 - 绿
+    else if(val < 45) color = "#84cc16";
+    else if(val < 55) color = "var(--text-dim)";
+    else if(val < 75) color = "#f59e0b";
+    else color = "var(--up)";                   // 极度贪婪 - 红
+
+    el.querySelector(".idx-value").className = "idx-value";
+    el.querySelector(".idx-value").textContent = val;
+    el.querySelector(".idx-extra").innerHTML =
+      `<span class="idx-tag" style="background:${color}22;color:${color}">${label}</span>`;
+  }catch(err){
+    el.querySelector(".idx-value").className = "idx-value";
+    el.querySelector(".idx-value").innerHTML =
+      `<span class="fail">获取失败，可访问 <a href="https://alternative.me/crypto/fear-and-greed-index/" target="_blank" rel="noopener">alternative.me</a> 查看</span>`;
+  }
+}
+
+/* ---------------- AHR999 指数 ----------------
+   没有官方稳定且允许浏览器跨域调用的公共接口，这里尝试一个社区常用接口；
+   如果失败（跨域被拒 / 接口下线），会明确提示并给出手动查询入口，
+   不影响页面其它部分正常使用。
+------------------------------------------------ */
+async function updateAhr999(){
+  const el = document.getElementById("idx-ahr999");
+  const candidateUrls = [
+    "https://dncapi.bxdapp.com/api/v3/coin/ahr999",
+    "https://api.ahr999.com/v1/index"
+  ];
+
+  for(const url of candidateUrls){
+    try{
+      const data = await fetchJSON(url);
+      const value = data?.data?.ahr999 ?? data?.ahr999 ?? data?.value;
+      if(value !== undefined && value !== null){
+        const num = parseFloat(value);
+        let color = "var(--text-dim)", label = "正常区间";
+        if(num < 0.45){ color = "var(--down)"; label = "抄底区间"; }
+        else if(num > 1.2){ color = "var(--up)"; label = "高估区间"; }
+
+        el.querySelector(".idx-value").className = "idx-value";
+        el.querySelector(".idx-value").textContent = num.toFixed(3);
+        el.querySelector(".idx-extra").innerHTML =
+          `<span class="idx-tag" style="background:${color}22;color:${color}">${label}</span>`;
+        return;
+      }
+    }catch(err){ /* 尝试下一个接口 */ }
+  }
+
+  el.querySelector(".idx-value").className = "idx-value";
+  el.querySelector(".idx-value").innerHTML =
+    `<span class="fail">暂无可用接口，可访问 <a href="https://ahr999.com" target="_blank" rel="noopener">ahr999.com</a> 手动查看</span>`;
+}
+
+function updateClock(){
+  const now = new Date();
+  const bj = new Date(now.getTime() + (8*60 - now.getTimezoneOffset())*60000);
+  const pad = n => String(n).padStart(2,"0");
+  document.getElementById("clock").textContent =
+    `北京时间 ${pad(bj.getHours())}:${pad(bj.getMinutes())}:${pad(bj.getSeconds())}`;
+}
+
+let refreshing = false;
+async function refreshAll(){
+  if(refreshing) return;
+  refreshing = true;
+  const btn = document.getElementById("refreshBtn");
+  btn.disabled = true;
+  btn.textContent = "刷新中…";
+
+  await Promise.all([
+    ...COINS.map(updateCoin),
+    updateFearGreed(),
+    updateAhr999()
+  ]);
+
+  btn.disabled = false;
+  btn.textContent = "刷新数据";
+  refreshing = false;
+}
+
+renderSkeleton();
+updateClock();
+setInterval(updateClock, 1000);
+refreshAll();
+setInterval(refreshAll, 30000); // 每 30 秒自动刷新一次
+</script>
+</body>
+</html>
