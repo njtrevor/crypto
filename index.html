@@ -262,9 +262,9 @@ function fmtPrice(p){
     return p.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
   }
 
-  // < 1：把小数点后一长串 0 压缩成 0.0{n}，n 是 0 的个数，
+  // < 1：小数点后有 3 个及以上连续 0 时，才压缩成 0.0{n}，n 是 0 的个数，
   // 后面接 3 位有效数字（四舍五入）。例如 0.0000581 -> "0.0{4}581"。
-  // 小数点后没有多余 0（0.1~0.999 这一段）就正常显示 3 位有效数字。
+  // 0 的个数小于 3（0.1~0.00999 这一段）就正常显示，不用压缩记号。
   // 用 toExponential 而不是手动截字符串，是为了让四舍五入正确
   // （比如 0.0000999 应该进位成 0.0{3}100，而不是被截断成 999）。
   if(p === 0) return "0.00";
@@ -274,7 +274,7 @@ function fmtPrice(p){
   const sig = m[1] + m[2];                         // 3 位有效数字
   const zeroCount = parseInt(m[3], 10) - 1;         // 小数点后 0 的个数
 
-  if(zeroCount <= 0.001) return "0." + sig;             // 0.1 ~ 0.999...
+  if(zeroCount < 3) return "0." + "0".repeat(Math.max(zeroCount, 0)) + sig; // 0 的个数不到 3 个，正常显示
   return `0.0{${zeroCount}}${sig}`;
 }
 
