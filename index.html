@@ -141,6 +141,7 @@
     <span>涨跌幅 = 现价 相对 北京时间当日 00:00 价格</span>
     <span>恐慌贪婪指数来自 alternative.me</span>
     <span>AHR999 为尝鲜接口，若无法获取会显示原因</span>
+    <span>提示：部分网络环境（如大陆网络）访问币安接口可能受限，若持续获取失败可尝试更换网络或自建代理</span>
   </footer>
 </div>
 
@@ -164,7 +165,14 @@ const COINS = [
   { name: "BNB",        sym: "BNB",  pair: "BNBUSDT"  },
 ];
 
-const BINANCE_BASE = "https://api.binance.com";
+// 币安有多个 base URL，data-api.binance.vision 是官方专门给"只读行情查询"用的域名，
+// 限制通常比主站 api.binance.com 更宽松；这里按顺序尝试，第一个能用的就用它。
+const BINANCE_BASES = [
+  "https://data-api.binance.vision",
+  "https://api.binance.com",
+  "https://api1.binance.com",
+  "https://api2.binance.com",
+];
 
 /* ------------------------------------------------------------------ */
 
@@ -239,8 +247,27 @@ function buildIndexCard(id, title, subtitle){
 
 async function fetchJSON(url){
   const res = await fetch(url);
-  if(!res.ok) throw new Error("HTTP " + res.status);
+  if(!res.ok){
+    const err = new Error("HTTP " + res.status);
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
+}
+
+// 依次尝试多个币安 base URL，全部失败才抛出最后一个错误。
+// path 例如 "/api/v3/ticker/24hr?symbol=BTCUSDT"
+async function fetchBinance(path){
+  let lastErr = null;
+  for(const base of BINANCE_BASES){
+    try{
+      return await fetchJSON(base + path);
+    }catch(err){
+      lastErr = err;
+      // 451 = 地区限制，440x = 该 base 有其它问题，都换下一个域名重试
+    }
+  }
+  throw lastErr;
 }
 
 async function updateCoin(coin){
@@ -249,8 +276,8 @@ async function updateCoin(coin){
     const midnight = beijingMidnightUTC();
 
     const [tickerData, klineData] = await Promise.all([
-      fetchJSON(`${BINANCE_BASE}/api/v3/ticker/24hr?symbol=${coin.pair}`),
-      fetchJSON(`${BINANCE_BASE}/api/v3/klines?symbol=${coin.pair}&interval=1m&startTime=${midnight}&limit=1`)
+      fetchBinance(`/api/v3/ticker/24hr?symbol=${coin.pair}`),
+      fetchBinance(`/api/v3/klines?symbol=${coin.pair}&interval=1m&startTime=${midnight}&limit=1`)
     ]);
 
     const current = parseFloat(tickerData.lastPrice);
@@ -277,8 +304,16 @@ async function updateCoin(coin){
     card.querySelector(".vol").textContent = "额 " + fmtVol(quoteVol);
 
   }catch(err){
+    let reason = "该币种可能未在 Binance 上线 USDT 交易对";
+    if(err && err.status === 451){
+      reason = "访问被拒绝（HTTP 451），当前网络所在地区可能被币安限制访问";
+    } else if(err && err.status === 400){
+      reason = `交易对 ${coin.pair} 不存在`;
+    } else if(!err || !err.status){
+      reason = "网络请求失败，可能是当前网络环境无法访问币安接口";
+    }
     card.querySelector(".price").className = "price";
-    card.querySelector(".price").innerHTML = `<span class="fail">获取失败（该币种可能未在 Binance 上线 USDT 交易对）</span>`;
+    card.querySelector(".price").innerHTML = `<span class="fail">获取失败：${reason}</span>`;
     card.querySelector(".change").className = "change flat";
     card.querySelector(".change").textContent = "";
     card.querySelector(".vol").textContent = "";
