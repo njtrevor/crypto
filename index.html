@@ -125,7 +125,7 @@
       <div class="logo">💹</div>
       <div>
         <h1>虚拟货币行情</h1>
-        <div class="sub">价格 · 涨跌幅（北京时间 0 点基准）· 市场指数</div>
+        <div class="sub">价格 · 涨跌幅（北京时间 0 点基准）· 市场指数 · 汇率</div>
       </div>
     </div>
     <div class="meta">
@@ -137,33 +137,38 @@
   <div class="grid" id="grid"></div>
 
   <footer>
-    <span>价格 / 24h 成交额来自 Binance API（USDT 计价）</span>
+    <span>价格 / 24h 成交额：BSV、OKB 来自 OKX，其余来自 Binance（均为 USDT 计价）</span>
     <span>涨跌幅 = 现价 相对 北京时间当日 00:00 价格</span>
     <span>恐慌贪婪指数来自 alternative.me</span>
-    <span>AHR999 为尝鲜接口，若无法获取会显示原因</span>
-    <span>提示：部分网络环境（如大陆网络）访问币安接口可能受限，若持续获取失败可尝试更换网络或自建代理</span>
+    <span>AHR999 数据参考 CoinGlass，官方接口需付费 Key，前端接口取不到时会显示原因</span>
+    <span>美元兑离岸人民币优先取 Yahoo Finance CNH=X，取不到时退回近似的在岸人民币中间价</span>
+    <span>提示：部分网络环境（如大陆网络）访问币安 / OKX 接口可能受限，若持续获取失败可尝试更换网络或自建代理</span>
   </footer>
 </div>
 
 <script>
 /* ------------------------------------------------------------------
-   配置区：币种列表（Binance 交易对，全部以 USDT 计价）
-   XEC / BSV / OKB 在 Binance 现货不一定存在交易对，抓取失败会在卡片上
-   直接提示，不会影响其它币种显示。
+   配置区：币种列表
+   多数币种走 Binance（USDT 交易对）。BSV / OKB 在 Binance 现货没有稳定
+   的 USDT 交易对（BSV 曾被下架，OKB 是 OKX 平台币未上线 Binance），
+   改为从 OKX（原 OKCoin）公开行情接口获取，instId 格式为 "BSV-USDT"。
+   source: "binance" | "okx"
 ------------------------------------------------------------------- */
 const COINS = [
-  { name: "比特币",     sym: "BTC",  pair: "BTCUSDT"  },
-  { name: "以太坊",     sym: "ETH",  pair: "ETHUSDT"  },
-  { name: "比特币现金", sym: "BCH",  pair: "BCHUSDT"  },
-  { name: "eCash",      sym: "XEC",  pair: "XECUSDT"  },
-  { name: "Arbitrum",   sym: "ARB",  pair: "ARBUSDT"  },
-  { name: "BSV",        sym: "BSV",  pair: "BSVUSDT"  },
-  { name: "Uniswap",    sym: "UNI",  pair: "UNIUSDT"  },
-  { name: "瑞波币",     sym: "XRP",  pair: "XRPUSDT"  },
-  { name: "狗狗币",     sym: "DOGE", pair: "DOGEUSDT" },
-  { name: "OKB",        sym: "OKB",  pair: "OKBUSDT"  },
-  { name: "BNB",        sym: "BNB",  pair: "BNBUSDT"  },
+  { name: "比特币",     sym: "BTC",  pair: "BTCUSDT",   source: "binance" },
+  { name: "以太坊",     sym: "ETH",  pair: "ETHUSDT",   source: "binance" },
+  { name: "比特币现金", sym: "BCH",  pair: "BCHUSDT",   source: "binance" },
+  { name: "eCash",      sym: "XEC",  pair: "XECUSDT",   source: "binance" },
+  { name: "Arbitrum",   sym: "ARB",  pair: "ARBUSDT",   source: "binance" },
+  { name: "BSV",        sym: "BSV",  pair: "BSV-USDT",  source: "okx"     },
+  { name: "Uniswap",    sym: "UNI",  pair: "UNIUSDT",   source: "binance" },
+  { name: "瑞波币",     sym: "XRP",  pair: "XRPUSDT",   source: "binance" },
+  { name: "狗狗币",     sym: "DOGE", pair: "DOGEUSDT",  source: "binance" },
+  { name: "OKB",        sym: "OKB",  pair: "OKB-USDT",  source: "okx"     },
+  { name: "BNB",        sym: "BNB",  pair: "BNBUSDT",   source: "binance" },
 ];
+
+const OKX_BASE = "https://www.okx.com";
 
 // 币安有多个 base URL，data-api.binance.vision 是官方专门给"只读行情查询"用的域名，
 // 限制通常比主站 api.binance.com 更宽松；这里按顺序尝试，第一个能用的就用它。
@@ -209,10 +214,6 @@ function renderSkeleton(){
   const grid = document.getElementById("grid");
   grid.innerHTML = "";
 
-  // 指数卡片：恐慌贪婪指数 + AHR999
-  grid.appendChild(buildIndexCard("fng", "恐慌与贪婪指数", "Fear & Greed Index"));
-  grid.appendChild(buildIndexCard("ahr999", "AHR999 囤币指数", "比特币定投指标"));
-
   COINS.forEach(c=>{
     const card = document.createElement("div");
     card.className = "card";
@@ -230,6 +231,13 @@ function renderSkeleton(){
     `;
     grid.appendChild(card);
   });
+
+  // 恐慌贪婪指数 + AHR999 放在币种后面
+  grid.appendChild(buildIndexCard("fng", "恐慌与贪婪指数", "Fear & Greed Index"));
+  grid.appendChild(buildIndexCard("ahr999", "AHR999 囤币指数", "比特币定投指标 · 数据参考 CoinGlass"));
+
+  // 美元兑离岸人民币放在最后
+  grid.appendChild(buildIndexCard("cnh", "美元兑离岸人民币", "USD/CNH"));
 }
 
 function buildIndexCard(id, title, subtitle){
@@ -274,19 +282,11 @@ async function updateCoin(coin){
   const card = document.getElementById(cardId(coin.pair));
   try{
     const midnight = beijingMidnightUTC();
+    const result = coin.source === "okx"
+      ? await fetchOkxCoin(coin.pair, midnight)
+      : await fetchBinanceCoin(coin.pair, midnight);
 
-    const [tickerData, klineData] = await Promise.all([
-      fetchBinance(`/api/v3/ticker/24hr?symbol=${coin.pair}`),
-      fetchBinance(`/api/v3/klines?symbol=${coin.pair}&interval=1m&startTime=${midnight}&limit=1`)
-    ]);
-
-    const current = parseFloat(tickerData.lastPrice);
-    const quoteVol = parseFloat(tickerData.quoteVolume);
-
-    let basePrice = null;
-    if(Array.isArray(klineData) && klineData.length > 0){
-      basePrice = parseFloat(klineData[0][1]); // open price of that 1m candle
-    }
+    const { current, quoteVol, basePrice } = result;
 
     let changePct = null;
     if(basePrice && basePrice > 0){
@@ -304,13 +304,14 @@ async function updateCoin(coin){
     card.querySelector(".vol").textContent = "额 " + fmtVol(quoteVol);
 
   }catch(err){
-    let reason = "该币种可能未在 Binance 上线 USDT 交易对";
+    const exch = coin.source === "okx" ? "OKX" : "Binance";
+    let reason = `该币种可能未在 ${exch} 上线该交易对`;
     if(err && err.status === 451){
-      reason = "访问被拒绝（HTTP 451），当前网络所在地区可能被币安限制访问";
-    } else if(err && err.status === 400){
+      reason = "访问被拒绝（HTTP 451），当前网络所在地区可能被限制访问";
+    } else if(err && (err.status === 400 || err.status === 404)){
       reason = `交易对 ${coin.pair} 不存在`;
     } else if(!err || !err.status){
-      reason = "网络请求失败，可能是当前网络环境无法访问币安接口";
+      reason = `网络请求失败，可能是当前网络环境无法访问 ${exch} 接口`;
     }
     card.querySelector(".price").className = "price";
     card.querySelector(".price").innerHTML = `<span class="fail">获取失败：${reason}</span>`;
@@ -318,6 +319,52 @@ async function updateCoin(coin){
     card.querySelector(".change").textContent = "";
     card.querySelector(".vol").textContent = "";
   }
+}
+
+// ---- Binance: 现价 + 北京 0 点开盘价 ----
+async function fetchBinanceCoin(pair, midnightMs){
+  const [tickerData, klineData] = await Promise.all([
+    fetchBinance(`/api/v3/ticker/24hr?symbol=${pair}`),
+    fetchBinance(`/api/v3/klines?symbol=${pair}&interval=1m&startTime=${midnightMs}&limit=1`)
+  ]);
+
+  const current = parseFloat(tickerData.lastPrice);
+  const quoteVol = parseFloat(tickerData.quoteVolume);
+  let basePrice = null;
+  if(Array.isArray(klineData) && klineData.length > 0){
+    basePrice = parseFloat(klineData[0][1]); // open price of that 1m candle
+  }
+  return { current, quoteVol, basePrice };
+}
+
+// ---- OKX（原 OKCoin）: 现价 + 北京 0 点开盘价 ----
+// ticker: GET /api/v5/market/ticker?instId=BSV-USDT
+// 历史 1 分钟K线: GET /api/v5/market/history-candles?instId=...&bar=1m&after=<ms>
+// OKX "after" 的含义是"返回时间早于该时间戳的记录"，因此传入 (北京0点+1分钟)
+// 就能拿到覆盖北京0点这一分钟的K线，取其开盘价 open 作为基准价。
+async function fetchOkxCoin(instId, midnightMs){
+  const ticker = await fetchJSON(`${OKX_BASE}/api/v5/market/ticker?instId=${instId}`);
+  if(ticker.code !== "0" || !ticker.data || !ticker.data.length){
+    const err = new Error(ticker.msg || "OKX ticker error");
+    err.status = 404;
+    throw err;
+  }
+  const t = ticker.data[0];
+  const current = parseFloat(t.last);
+  const quoteVol = parseFloat(t.volCcy24h); // 24h 成交额（计价货币，约等于 USDT）
+
+  let basePrice = null;
+  try{
+    const after = midnightMs + 60000;
+    const kline = await fetchJSON(
+      `${OKX_BASE}/api/v5/market/history-candles?instId=${instId}&bar=1m&after=${after}&limit=1`
+    );
+    if(kline.code === "0" && kline.data && kline.data.length){
+      basePrice = parseFloat(kline.data[0][1]); // [ts, open, high, low, close, ...]
+    }
+  }catch(e){ /* 拿不到北京0点K线时 basePrice 保持 null，上层会提示"数据缺失" */ }
+
+  return { current, quoteVol, basePrice };
 }
 
 /* ---------------- 恐慌贪婪指数（alternative.me，官方支持 CORS） ---------------- */
@@ -348,15 +395,17 @@ async function updateFearGreed(){
 }
 
 /* ---------------- AHR999 指数 ----------------
-   没有官方稳定且允许浏览器跨域调用的公共接口，这里尝试一个社区常用接口；
-   如果失败（跨域被拒 / 接口下线），会明确提示并给出手动查询入口，
-   不影响页面其它部分正常使用。
+   你指定的数据源 coinglass.com/zh/pro/i/ahr999 是一个前端由 JS 渲染的
+   页面，数值不在初始 HTML 里，浏览器抓不到；而 CoinGlass 官方 API
+   （open-api-v4.coinglass.com）所有接口都需要付费 CG-API-KEY 才能调用，
+   密钥直接写进前端代码会被任何人看到，也不适合公开页面。
+   这里先尝试一个免费的社区镜像接口作为替代，取不到时会明确提示原因，
+   并给出 CoinGlass 页面链接方便手动查看最新数值。
 ------------------------------------------------ */
 async function updateAhr999(){
   const el = document.getElementById("idx-ahr999");
   const candidateUrls = [
     "https://dncapi.bxdapp.com/api/v3/coin/ahr999",
-    "https://api.ahr999.com/v1/index"
   ];
 
   for(const url of candidateUrls){
@@ -372,7 +421,8 @@ async function updateAhr999(){
         el.querySelector(".idx-value").className = "idx-value";
         el.querySelector(".idx-value").textContent = num.toFixed(3);
         el.querySelector(".idx-extra").innerHTML =
-          `<span class="idx-tag" style="background:${color}22;color:${color}">${label}</span>`;
+          `<span class="idx-tag" style="background:${color}22;color:${color}">${label}</span>` +
+          ` <a href="https://www.coinglass.com/zh/pro/i/ahr999" target="_blank" rel="noopener" style="font-size:11px;color:var(--text-dim)">对照 CoinGlass →</a>`;
         return;
       }
     }catch(err){ /* 尝试下一个接口 */ }
@@ -380,7 +430,77 @@ async function updateAhr999(){
 
   el.querySelector(".idx-value").className = "idx-value";
   el.querySelector(".idx-value").innerHTML =
-    `<span class="fail">暂无可用接口，可访问 <a href="https://ahr999.com" target="_blank" rel="noopener">ahr999.com</a> 手动查看</span>`;
+    `<span class="fail">CoinGlass 官方接口需付费 API Key，无法在纯前端页面直接调用；免费镜像接口也暂时获取失败，可访问 <a href="https://www.coinglass.com/zh/pro/i/ahr999" target="_blank" rel="noopener">CoinGlass 页面</a> 手动查看最新值</span>`;
+}
+
+/* ---------------- 美元兑离岸人民币 (USD/CNH) ----------------
+   离岸人民币是场外交易品种，很少有免费且支持浏览器跨域的实时接口。
+   这里优先尝试 Yahoo Finance 的 CNH=X 报价（常被前端直接调用，但 Yahoo
+   并未正式承诺支持跨域，可能会被拦截）；失败则退回 frankfurter.app
+   （欧洲央行汇率，官方支持 CORS）里的美元兑人民币中间价格作为近似值，
+   并明确标注这是"近似（在岸人民币中间价）"而不是真正的离岸价。
+------------------------------------------------------------------- */
+async function updateCnh(){
+  const el = document.getElementById("idx-cnh");
+  const valueEl = () => el.querySelector(".idx-value");
+  const extraEl = () => el.querySelector(".idx-extra");
+
+  // 方案一：Yahoo Finance CNH=X
+  try{
+    const data = await fetchJSON(
+      "https://query1.finance.yahoo.com/v8/finance/chart/CNH=X?range=2d&interval=1d"
+    );
+    const result = data?.chart?.result?.[0];
+    const meta = result?.meta;
+    const price = meta?.regularMarketPrice;
+    const prevClose = meta?.previousClose ?? meta?.chartPreviousClose;
+    if(price){
+      renderCnh(price, prevClose, "USD/CNH（Yahoo Finance）");
+      return;
+    }
+  }catch(err){ /* 继续尝试下一个数据源 */ }
+
+  // 方案二：frankfurter.app 的美元兑人民币中间价，作为近似值
+  try{
+    const today = await fetchJSON("https://api.frankfurter.app/latest?from=USD&to=CNY");
+    const rate = today?.rates?.CNY;
+    const dateStr = today?.date;
+    if(rate){
+      let prevRate = null;
+      try{
+        const d = new Date(dateStr);
+        d.setDate(d.getDate() - 1);
+        const prevDateStr = d.toISOString().slice(0,10);
+        const prev = await fetchJSON(`https://api.frankfurter.app/${prevDateStr}..${dateStr}?from=USD&to=CNY`);
+        const dates = Object.keys(prev?.rates || {}).sort();
+        if(dates.length > 1){
+          prevRate = prev.rates[dates[0]].CNY;
+        }
+      }catch(e){ /* 没有前一日数据也无妨，只是不显示涨跌幅 */ }
+      renderCnh(rate, prevRate, "近似值 · 在岸人民币中间价（USD/CNY）");
+      return;
+    }
+  }catch(err){ /* 两个数据源都失败 */ }
+
+  valueEl().className = "idx-value";
+  valueEl().innerHTML =
+    `<span class="fail">获取失败，可访问 <a href="https://www.investing.com/currencies/usd-cnh" target="_blank" rel="noopener">investing.com</a> 查看实时离岸人民币汇率</span>`;
+}
+
+function renderCnh(price, prevPrice, sourceLabel){
+  const el = document.getElementById("idx-cnh");
+  el.querySelector(".idx-value").className = "idx-value";
+  el.querySelector(".idx-value").textContent = parseFloat(price).toFixed(4);
+
+  let changeHtml = "";
+  if(prevPrice){
+    const pct = (price - prevPrice) / prevPrice * 100;
+    const dirClass = pct >= 0 ? "up" : "down";
+    const arrow = pct >= 0 ? "+" : "";
+    changeHtml = `<span class="change ${dirClass}" style="font-size:13px;margin-right:8px">${arrow}${pct.toFixed(2)}%</span>`;
+  }
+  el.querySelector(".idx-extra").innerHTML =
+    `${changeHtml}<span style="font-size:11px;color:var(--text-dim)">${sourceLabel}</span>`;
 }
 
 function updateClock(){
@@ -402,7 +522,8 @@ async function refreshAll(){
   await Promise.all([
     ...COINS.map(updateCoin),
     updateFearGreed(),
-    updateAhr999()
+    updateAhr999(),
+    updateCnh()
   ]);
 
   btn.disabled = false;
